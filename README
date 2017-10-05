@@ -1,0 +1,87 @@
+README for Devidify 1.14
+====== === ======== ====
+
+(See below for REQUIREMENTS, INSTALLATION, UNINSTALLATION, and NOTES ON USE)
+
+Devidify is a humble little hack for extracting audio tracks from DVDs.
+I wrote it because I had a few concert DVDs laying around, and wanted to
+get their audio tracks into my portable music player. At the time, existing
+Linux-based tools meant ripping the video first, then extracting the audio.
+They made none of this easy. Who has time for such nonsense? Devidify makes
+things easy. Feed it a shiny disc and it spits out WAV, MP3, or Ogg Vorbis
+files.
+
+The current version of Devidify has undergone extensive testing under Ubuntu
+Linux. It should work on other Linuxes, assuming a few dependencies are met
+(see "REQUIREMENTS" below).
+
+BUG REPORTS, PATCHES, AND COMMENTS ON, CRITIQUES OF, AND ADVICE REGARDING
+THE CODE ARE WARMLY WELCOMED BY THE AUTHOR! I am a self-taught coder, and
+this is only the second GUI application I've written. As such, much of the
+code may be frightfully wrongheaded. Devidify is released under the GPL
+(version 2), and as such carries NO WARRANTY! Devidify could break your
+computer, trash your data, and ruin your whole day! You have been warned!
+
+Devidify's home page on the Web: http://www.mahnamahna.net/devidify
+
+Please address all e-mail regarding Devidify to: devidify@mahnamahna.net
+
+
+REQUIREMENTS
+============
+
+Devidify runs on Linux systems. It requires Python and PyGTK, the MPlayer
+media player, and the lsdvd command line tool. Lame is required for MP3
+encoding, and oggenc is required for Ogg Vorbis encoding. On an Ubuntu Linux
+system, ensure the following packages are installed and you'll be all set:
+python, python-gtk2, mplayer, lsdvd, lame, vorbis-tools. On other Linuxes,
+package names will of course vary.
+
+
+INSTALLATION
+============
+
+Devidify itself consists of just two files: devidify and devidify.glade. You
+can place these files together in any folder you like and run the program from
+there, or, if you have superuser rights, you can install Devidify system-wide.
+(Doing so will also add a Devidify entry to your desktop environment's menus.)
+To do so, extract the Devidify archive to a folder; then, on the command line,
+with that folder as your working directory, issue the following command as root
+(Ubuntu users: put 'sudo' in front): python setup.py install
+
+
+UNINSTALLATION
+==============
+
+If you installed Devidify system-wide, delete /usr/local/bin/devidify,
+/usr/share/applications/devidify.desktop, and the /usr/local/share/devidify
+folder.
+
+
+NOTES ON USE
+===== == ===
+
+Devidify should prove simple to use: (1) Insert DVD. (2) Click 'Scan DVD'.
+(3) Select tracks for audio extraction. (Right-click for an option to watch
+the video for a given track.) (4) Click 'Rip Audio Track(s)'.
+
+Select Edit, Preferences from the menu bar to reach a dialog where you can
+specify the format for generated audio files, as well as the folder they are
+dumped into.
+
+There are three Preferences options not made available via the GUI. Edit
+~/.devidifyrc instead to alter them. (Devidify will create that file if
+it does not exist.) These options are:
+
+      device  --  Defaults to /dev/dvd. If your DVD drive lives somewhere
+                  else, say so here (i.e. 'device = /dev/hdd')
+
+ mp3_bitrate  --  The target variable bitrate for generated MP3 files.
+                  Default is 192. This value is passed to lame at encoding
+                  time.
+
+ ogg_bitrate  --  The target quality rating for generated OGG files.
+                  Default is 6. This value is passed to oggenc at encoding
+                  time.
+
+

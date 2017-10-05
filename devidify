@@ -1,0 +1,535 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# Devidify
+# A humble hack for extracting audio tracks from DVDs.
+# Copyright © 2007 Matthew Newton, released under the GPL version 2
+# 
+# devidify.py begun 4/21/2007
+# 1.0 on 5/6/2007 4:43pm
+# 1.05 on 5/8/2007 12:14am
+# 1.10 on 5/19/2007 9:52pm
+# 1.11 on 6/7/2007 10:42pm
+# 1.12 on 7/1/2007 8:20pm
+# 1.13 on 7/19/2007 11:24pm
+# 1.14 on 5/9/2008 1:33pm
+# /\/\/\/
+
+dbg = 0
+version = '1.14'
+
+import os, sys, time, threading, locale, popen2, signal, ConfigParser, pygtk
+pygtk.require("2.0")
+import gobject, gtk, gtk.glade
+
+class Devidify:
+    def __init__(self, glade):
+        ''' grab the glade file + build the GUI '''
+        self.wTree = gtk.glade.XML(glade, 'mainWindow')
+        self.dic = { 'on_mainWindow_destroy': (self.onExit), 
+                     'on_quit1_activate': (self.onExit), 
+                     'on_select_all1_activate': (self.selectAll), 
+                     'on_unselect_all1_activate': (self.unselectAll),
+                     'on_preferences1_activate': (self.doPrefs, glade),
+                     'on_about1_activate': (self.doAbout),
+                     'on_scanButton_clicked': (self.doScan), 
+                     'on_ripButton_clicked': (self.doRip) }
+        self.wTree.signal_autoconnect(self.dic)
+        self.pTree = gtk.glade.XML(glade, 'popupMenu')
+        self.pTree.signal_autoconnect({'on_play_video_activate': (self.playVideo)})
+        self.window = self.wTree.get_widget('mainWindow')
+        self.popupMenu = self.pTree.get_widget('popupMenu')
+        self.scanButton = self.wTree.get_widget('scanButton')
+        self.ripButton = self.wTree.get_widget('ripButton')
+        self.ripButton.set_sensitive(False)
+        # make ListStore, get TreeView, hook 'em up
+        self.trackListListStore = gtk.ListStore(bool, int, int, str) 
+        self.trackListTreeView = self.wTree.get_widget('trackListTreeView')
+        self.trackListTreeView.set_model(self.trackListListStore)
+        # next line doesn't work when built-in to glade file, I wonder why?
+        self.trackListTreeView.connect('button_press_event', self.treeClick)
+        # cell renderer for column 0 (toggle)
+        self.toggler = gtk.CellRendererToggle()
+        self.toggler.connect('toggled', self.toggleCheck)
+        self.column = gtk.TreeViewColumn('Rip?', self.toggler, active=0)
+        self.column.set_sizing(gtk.TREE_VIEW_COLUMN_FIXED)
+        self.column.set_fixed_width(50)
+        self.column.set_alignment(0.5)
+        self.trackListTreeView.append_column(self.column)
+        # cell renderer for columns 1 and 2 (centered)
+        self.renderer = gtk.CellRendererText()
+        self.renderer.set_property('xalign', 0.5)
+        # TreeView column 1
+        self.column = gtk.TreeViewColumn('Title', self.renderer, text=1)
+        self.column.set_resizable(True)
+        self.column.set_alignment(0.5)
+        self.trackListTreeView.append_column(self.column)
+        # TreeView column 2
+        self.column = gtk.TreeViewColumn('Chapter', self.renderer, text=2)
+        self.column.set_resizable(True)
+        self.column.set_alignment(0.5)
+        self.trackListTreeView.append_column(self.column)
+        # TreeView column 3 (generic renderer)
+        self.column = gtk.TreeViewColumn('Length', gtk.CellRendererText(), text=3)
+        self.column.set_resizable(True)
+        self.trackListTreeView.append_column(self.column)
+
+    def doScan(self, widget):
+        ''' scan DVD, fetch track listing, put it in TreeView '''
+        debug('Scan clicked')
+        # lsdvd does the hard work and returns a python dictionary called lsdvd
+        self.cmd = os.popen('lsdvd ' + prefs.device + ' -xOy')
+        self.output = self.cmd.read()
+        self.cmd.close()
+        self.output = 'self.' + self.output
+        try:
+            # generate dictionary self.lsdvd - handy place to throw error since
+            # we don't notice any error lsdvd might have thrown just above
+            exec(self.output)
+        except:
+            error('Unable to read a DVD in device ' + prefs.device + '.')
+        #debug(self.lsdvd)
+        self.discTitle = self.lsdvd['title'].title()
+        self.discTitleLabel = self.wTree.get_widget('titleLabel')
+        self.discTitleLabel.set_text(self.discTitle)
+        # build the trackList
+        self.rawTrackList = self.lsdvd['track']
+        self.trackList = []
+        for t in self.rawTrackList:
+            track = t['ix']
+            rawChapterList = t['chapter']
+            for c in rawChapterList:
+                chapter = c['ix']
+                length = c['length']
+                # now we've got one row of useful information
+                trackRow = [False, track, chapter, length]
+                self.trackList.append(trackRow)
+        self.populateList()
+        self.ripButton.set_sensitive(True)
+
+    def populateList(self):
+        ''' clear out the ListStore, populate it with self.trackList '''
+        self.trackListListStore.clear()
+        for self.track in self.trackList:
+            debug(self.track)
+            self.iter = self.trackListListStore.append()
+            self.trackListListStore.set(self.iter, 0, self.track[0], 1, self.track[1], 2, self.track[2], 3, time.strftime('%M:%S', time.localtime(self.track[3])))
+
+    def treeClick(self, treeview, event):
+        if event.button == 3:
+            x = int(event.x)
+            y = int(event.y)
+            time = event.time
+            pathinfo = treeview.get_path_at_pos(x, y)
+            if pathinfo is not None:
+                path, col, cellx, celly = pathinfo
+                treeview.grab_focus()
+                treeview.set_cursor(path, col, 0)
+                self.popupMenu.popup(None, None, None, event.button, time)
+            return True
+
+    def playVideo(self, widget):
+        selection = self.trackListTreeView.get_selection()
+        row = selection.get_selected_rows()[1][0][0]
+        title = self.trackList[row][1]
+        chapter = self.trackList[row][2]
+        debug('play title ' + str(title) + ' chapter ' + str(chapter))
+        # os.spawn* would not work here, don't understand why
+        # mplayer 'play video' command line
+        os.system('mplayer -dvd-device %s dvd://%s -chapter %s-%s &' % (prefs.device, title, chapter, chapter))
+
+    def doRip(self, widget):
+        ''' prepare the entire rip job, hand off to ripDialog '''
+        global ripPID
+        debug('Rip clicked')
+        self.scanButton.set_sensitive(False) 
+        self.ripButton.set_sensitive(False)
+        self.wavFiles = []
+        self.queue = []
+        # build the queue for the ripDialog
+        self.make_wavs()
+        if prefs.mode == 'mp3':
+            self.make_mp3s()
+        if prefs.mode == 'ogg':
+            self.make_oggs()
+        # queue is all built; spawn ripDialog and wait for it to finish
+        debug('shell queue: ' + str(self.queue))
+        self.ripDialog = RipDialog(glade, self.queue)
+        # we're back
+        self.scanButton.set_sensitive(True) 
+        self.ripButton.set_sensitive(True)
+
+    def make_wavs(self):
+        ''' for the queue: use mplayer to rip wav files '''
+        for row in self.trackList:
+            if row[0] == True:
+                title, chapter = str(row[1]), str(row[2])
+                # padding for the generated filenames:
+                # the "jeff bowling memorial feature" 5/9/2007 5:32pm
+                # (could really be better: doesn't handle >2-digit cases)
+                paddedTitle = self.padDigit(title)
+                paddedChapter = self.padDigit(chapter)
+                filename = '%s_%s_%s.wav' % (self.discTitle, paddedTitle, paddedChapter)
+                self.wavFiles.append(filename)
+                targetfile = os.path.join(prefs.dir, filename)
+                # the mplayer command line
+                # someday this could be a pref - or not :)
+                command = 'mplayer -quiet -dvd-device %s dvd://%s -chapter %s-%s -vc null -vo null -ao pcm:file="%s"' % (prefs.device, title, chapter, chapter, targetfile)
+                self.queue.append(command)
+
+    def make_mp3s(self):
+        ''' for the queue: use lame to encode to mp3 '''
+        for file in self.wavFiles:
+            targetfile = os.path.join(prefs.dir, file)
+            # the lame command line
+            command = 'lame -v -b ' + prefs.mp3_bitrate + ' --disptime 4 ' \
+                    + targetfile + ' ' + targetfile[:-4] + '.mp3'
+            self.queue.append(command)
+            command = 'rm ' + targetfile
+            self.queue.append(command)
+
+    def make_oggs(self):
+        ''' for the queue: use oggenc to encode to ogg '''
+        for file in self.wavFiles:
+            targetfile = os.path.join(prefs.dir, file)
+            # the oggenc command line
+            command = 'oggenc -q %s %s' % (prefs.ogg_quality, targetfile)
+            self.queue.append(command)
+            command = 'rm ' + targetfile
+            self.queue.append(command)
+
+    def padDigit(self, digit):
+        ''' zero-pad a 1-digit number '''
+        if len(str(digit)) == 1:
+            return '0' + str(digit)
+        else:
+            return str(digit)
+
+    def toggleCheck(self, cell, path):
+        ''' toggle a check box '''
+        iter = self.trackListListStore.get_iter((int(path),))
+        toggle = self.trackListListStore.get_value(iter, 0)
+        toggle = not toggle
+        self.trackList[int(path)][0] = toggle
+        self.trackListListStore.set(iter, 0, toggle)
+
+    def selectAll(self, widget):
+        ''' check all trackList toggles '''
+        for each in range(len(self.trackList)):
+            self.trackList[each][0] = True
+            iter = self.trackListListStore.get_iter((each,))
+            self.trackListListStore.set(iter, 0, True)
+    
+    def unselectAll(self, widget):
+        ''' uncheck all trackList toggles '''
+        for each in range(len(self.trackList)):
+            self.trackList[each][0] = False
+            iter = self.trackListListStore.get_iter((each,))
+            self.trackListListStore.set(iter, 0, False)
+
+    def doPrefs(self, widget, glade):
+        ''' summon the Preferences dialog '''
+        self.prefsDialog = PrefsDialog(glade)
+
+    def doAbout(self, widget):
+        ''' summon the About dialog '''
+        self.about = AboutDialog()
+
+    def onExit(self, widget):
+        ''' clean up and quit '''
+        debug('Exiting')
+        prefs.writePrefs()
+        gtk.main_quit()
+
+class RipDialog:
+    def __init__(self, glade, queue):
+        self.queue = queue
+        # glade + handlers
+        self.wTree = gtk.glade.XML(glade, 'ripDialog')
+        self.dialog = self.wTree.get_widget('ripDialog')
+        self.textView = self.wTree.get_widget('textview1')
+        self.buffer = self.textView.get_buffer()
+        self.cancelButton = self.wTree.get_widget('cancelButton')
+        self.dic = { 'on_ripDialog_delete_event': (self.onDeleteEvent),
+                     'on_cancelButton_clicked': (self.onCancel)}
+        self.wTree.signal_autoconnect(self.dic)
+        # set up threaded shell task output - see pygtk_faq.html#14.23
+        self.encoding = locale.getpreferredencoding()
+        self.utf8conv = lambda x : unicode(x, self.encoding).encode('utf8')
+        #self.buffer.set_text(str(self.queue))
+        self.thread = threading.Thread(target=self.shellQueue, args=(self.buffer, None))
+        self.thread.start()
+        self.do = self.dialog.run()
+        self.dialog.destroy()
+
+    def shellQueue(self, buffer, foo=None):
+        ''' process shell commands one after another then close dialog '''
+        global ripPID
+        for command in self.queue:
+            # if user has canceled, break out
+            if ripPID == -1:
+                break
+            self.process = popen2.Popen4(command)
+            self.stdouterr = self.process.fromchild
+            ripPID = self.process.pid
+            debug('spawned pid ' + str(ripPID))
+            while 1:
+                self.line = self.stdouterr.readline()
+                if not self.line:
+                    break
+                gtk.gdk.threads_enter()
+                self.iter = buffer.get_end_iter()
+                buffer.place_cursor(self.iter)
+                buffer.insert(self.iter, self.utf8conv(self.line))
+                self.textView.scroll_to_mark(buffer.get_insert(), 0.1)
+                gtk.gdk.threads_leave()
+            debug('one rip complete')
+        debug('all rips complete')
+        # reset ripPID so we can rip again
+        ripPID = 0
+        self.dialog.response(gtk.RESPONSE_OK)
+
+    def onCancel(self, widget, foo=None):
+        ''' cancel the current shell task as dialog closes '''
+        #
+        # TODO FIXME
+        # the whole global ripPID approach is terrible,
+        # but what we do here is *horrible*... the Popen4
+        # in shellQueue spawns TWO tasks: (1) a /bin/sh that
+        # in turn spawns (2) mplayer (or whatever). why? dunno.
+        # should we really count on (2) having ripPID+1 for a pid?
+        # almost certainly not. but for now, it works. :(
+        #
+        global ripPID
+        killPID = ripPID + 1
+        ps_cmd = os.popen('ps -o cmd -p ' + str(killPID))
+        output = ps_cmd.read()
+        ps_cmd.close()
+        # be kinda sure we're killing what we mean to kill
+        if 'mplayer' in output or 'lame' in output or 'oggenc' in output:        
+            debug('ok to cancel pid ' + str(killPID))
+            # send ctrl-c equivalent to shell process
+            os.kill(killPID, signal.SIGINT)
+            # break the loop in shellQueue
+            ripPID = -1
+
+    def onDeleteEvent(self, widget, foo=None):
+        ''' prevents ripDialog closure via title bar's close button '''
+        return True
+
+class AboutDialog:
+    def __init__(self):
+        global version
+        self.about = gtk.AboutDialog()
+        self.about.set_name('Devidify')
+        self.about.set_version(version)
+        self.about.set_copyright('Copyright © 2007 Matthew Newton')
+        self.about.set_comments('A humble little hack for extracting audio tracks from DVDs.')
+        self.about.set_authors(['Matthew Newton <devidify@mahnamahna.net>'])
+        self.about.set_website('http://www.mahnamahna.net/devidify')
+        self.about.set_license('Devidify is free software; you can redistribute it and/or modify it under the terms of version 2 of the GNU General Public License as published by the Free Software Foundation.\n\nThis program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.\n\nYou should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA, or visit the following page on the World Wide Web:\n\nhttp://www.fsf.org/licensing/licenses/gpl.html')
+        self.about.set_wrap_license(True)
+        self.icon = self.about.render_icon(gtk.STOCK_CDROM, gtk.ICON_SIZE_DIALOG)
+        self.about.set_icon(self.icon)
+        self.about.set_logo(self.icon)
+        self.about.run()
+        self.about.destroy()
+
+class ErrorDialog:
+    def __init__(self, glade, err):
+        self.wTree = gtk.glade.XML(glade, 'errorDialog')
+        self.dialog = self.wTree.get_widget('errorDialog')
+        self.label = self.wTree.get_widget('errorLabel')
+        self.label.set_text(err)
+        self.dialog.run()
+        self.dialog.destroy()
+
+class PrefsDialog:
+    def __init__(self, glade):
+        ''' bring up the Preferences dialog '''
+        self.wTree = gtk.glade.XML(glade, 'prefsDialog')
+        self.dialog = self.wTree.get_widget('prefsDialog')
+        self.modeCombo = self.wTree.get_widget('modeCombo')
+        self.dirChooser = self.wTree.get_widget('dirChooser')
+        # make modeCombo match current reality
+        if prefs.mode == 'wav':
+            self.modeCombo.set_active(0)
+        if prefs.mode == 'mp3':
+            self.modeCombo.set_active(1)
+        if prefs.mode == 'ogg':
+            self.modeCombo.set_active(2)
+        # make dirChooser match current reality
+        self.dirChooser.set_current_folder(prefs.dir)
+        # grab handlers
+        self.dic = { 'on_modeCombo_changed': (self.modeChange), 
+                     'on_dirChooser_selection_changed': (self.dirChange) }
+        self.wTree.signal_autoconnect(self.dic)
+        self.dialog.run()
+        self.dialog.destroy()
+
+    def modeChange(self, widget):
+        ''' callback for modeCombo gtkComboBox '''
+        if widget.get_active() == 0:
+            prefs.newMode('wav')
+        if widget.get_active() == 1:
+            prefs.newMode('mp3')
+        if widget.get_active() == 2:
+            prefs.newMode('ogg')
+        prefs.check()
+    
+    def dirChange(self, widget):
+        ''' callback for dirChooser gtkFileChooserButton '''
+        # confirm we can write to the selected folder
+        if prefs.newDir(widget.get_current_folder()) == True:
+            # requested dir is fine; nothing for us to do
+            prefs.check()
+        else:
+            # requested dir no good, so change back
+            # (FIXME: should use error() to alert user what happened,
+            # but bogus dir throws multiple identical errors right now
+            # instead of just one (reason unknown), so debug() instead)
+            debug('bogus dirChange request')
+            widget.set_current_folder(prefs.dir)
+            prefs.check()
+
+
+class Prefs:
+    def __init__(self):
+        ''' an instance of this class tracks the global prefs '''
+        self.rcfilename = os.path.join(os.environ.get('HOME'), '.devidifyrc')
+        self.prefs = ConfigParser.ConfigParser()
+        self.readPrefs()
+        self.check()
+
+    def readPrefs(self):
+        ''' read rcfile (if exists) for prefs, init any missing prefs '''
+        self.prefs.read(self.rcfilename)
+        # mode
+        try:
+            self.mode = self.prefs.get('devidify', 'mode')
+        except ConfigParser.NoSectionError:
+            self.prefs.add_section('devidify')
+            self.newMode('ogg')
+        except ConfigParser.NoOptionError:
+            self.newMode('ogg')
+        # dir
+        try:
+            self.dir = self.prefs.get('devidify', 'dir')
+        except ConfigParser.NoOptionError:
+            self.newDir(os.path.join(os.environ.get('HOME'), 'Desktop'))
+        # device
+        try:
+            self.device = self.prefs.get('devidify', 'device')
+        except ConfigParser.NoOptionError:
+            self.device = '/dev/dvd'
+            self.prefs.set('devidify', 'device', '/dev/dvd')
+        # mp3_bitrate
+        try:
+            self.mp3_bitrate = self.prefs.get('devidify', 'mp3_bitrate')
+        except ConfigParser.NoOptionError:
+            self.mp3_bitrate = '192'
+            self.prefs.set('devidify', 'mp3_bitrate', '192')
+        # ogg_quality
+        try:
+            self.ogg_quality = self.prefs.get('devidify', 'ogg_quality')
+        except ConfigParser.NoOptionError:
+            self.ogg_quality = '6'
+            self.prefs.set('devidify', 'ogg_quality', '6')
+
+    def writePrefs(self):
+        ''' write the rcfile to disk '''
+        debug('Writing rcfile')
+        f = file(self.rcfilename, 'w')
+        self.prefs.write(f)
+        f.close()
+    
+    def newDir(self, dir):
+        ''' respond to selection of new directory '''
+        debug('newDir: request is: ' + dir)
+        if os.path.isdir(dir):
+            if os.access(dir, os.W_OK):
+                self.dir = dir
+                self.prefs.set('devidify', 'dir', dir)
+                return True
+            else:
+                # TODO
+                # add a friendly ErrorDialog when FIXME in dirChange is fixed
+                print sys.argv[0] + ': cannot write to ' + dir
+                return False
+
+    def newMode(self, mode):
+        ''' respond to selection of new mode '''
+        debug('newMode')
+        self.mode = mode
+        self.prefs.set('devidify', 'mode', mode)
+
+    def check(self):
+        debug('  pref: mode is ' + self.mode)
+        debug('  pref: dir is ' + self.dir)
+
+
+######################################################################
+
+def debug(msg):
+    if dbg == 1:
+	print msg
+
+def error(err):
+    print sys.argv[0] + ': ' + err
+    errorDialog = ErrorDialog(glade, err)
+
+def get_glade():
+    for glade in [ '/usr/local/share/devidify/devidify.glade',
+                   'devidify.glade', 
+                   os.path.join(sys.path[0], 'devidify.glade'),
+                   '/usr/share/devidify/devidify.glade',
+                 ]:
+        if os.path.isfile(glade):
+            return glade
+    print sys.argv[0] + ': devidify.glade file not found; exiting.'
+    sys.exit(1)
+
+def check_all_deps():
+    ''' check to ensure mplayer, lsdvd, lame, and oggenc are available '''
+    check_dep('mplayer', 'mplayer is not available. Please install the mplayer package before using Devidify.', True)
+    check_dep('lsdvd', 'lsdvd is not available. Please install the lsdvd package before using Devidify.', True)
+    check_dep('lame', 'lame is not available. lame is required for MP3 encoding. MP3 encoding will fail until lame is installed.', False)
+    check_dep('oggenc', 'oggenc is not available. oggenc is required for OGG encoding. OGG encoding will fail until oggenc is installed.', False)
+
+def check_dep(command, err, fatal):
+    ''' check if command in path; if not, bomb out '''
+    global which
+    if not which(command):
+        error(err)
+        if fatal == True:
+            sys.exit(1)
+
+def url_hook(dialog, link, data):
+    ''' pass a link to a web browser '''
+    global which
+    if which('sensible-browser'): # Debian-ish systems have this
+        os.system('sensible-browser ' + link)
+    elif os.environ['BROWSER']: # I've seen this on other Linuxes
+        os.system(os.environ['BROWSER'] + ' ' + link)
+    elif which('firefox'):
+        os.system('firefox ' + link)
+    else:
+        error("Oops, I can't find a Web browser.")
+
+########################################
+
+if __name__ == "__main__":
+
+    glade = get_glade()
+    which = lambda prog: ([os.path.join(dir, prog) \
+            for dir in os.environ['PATH'].split(os.pathsep) \
+            if os.path.exists(os.path.join(dir, prog))] + [None])[0]
+    check_all_deps()
+    gobject.threads_init()
+    gtk.gdk.threads_init()
+    ripPID = 0
+    prefs = Prefs()
+    app = Devidify(glade)
+    gtk.about_dialog_set_url_hook(url_hook, None)
+    gtk.main()
+

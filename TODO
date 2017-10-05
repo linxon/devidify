@@ -1,0 +1,13 @@
+TODO for Devidify 1.14
+==== === ======== ====
+
+- fix frightfully ugly lame output display
+- disallow mp3 encoding if lame is missing
+- disallow ogg encoding if oggenc is missing
+- don't write the rcfile on close every time
+- url_hook should get the preferred browser from Gnome settings
+- perhaps switch from rcfile to gconf
+- use dbus to know whether there's a disc/dvd available/inserted/etc
+- use gstreamer to do the hard work instead of simple shell commands
+- replace lsdvd with something that can read evil Sony ARccOS discs
+

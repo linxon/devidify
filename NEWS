@@ -1,0 +1,33 @@
+NEWS for Devidify 1.14
+==== === ======== ====
+
+1.14
+- Fix startup issue on Suse.
+- Fix runaway looping in Prefs dialog (Suse, Ubuntu Hardy).
+
+1.12
+7/1/2007
+- Minor code cleanup.
+- First Google Code release.
+
+1.10
+5/19/2007
+- "Play Video" implemented in right-click menu.
+- About dialog complete.
+- Check process name in onCancel.
+- Added mp3_bitrate and ogg_quality hidden preferences.
+- Check dependencies on startup.
+- Many bugfixes.
+- First public release.
+
+1.05
+5/8/2007
+- Preferences dialog implemented.
+- Digit padding in generated filenames.
+- Many bugfixes.
+
+1.0
+5/6/2007
+- One point oh.
+- Basic functionality working.
+
